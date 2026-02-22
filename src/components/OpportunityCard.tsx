@@ -40,6 +40,7 @@ interface OpportunityCardProps {
   visibleActions?: string[];
   actionOrder?: string[];
   actionCounts?: Partial<Record<'call' | 'sms' | 'email' | 'appointment' | 'tasks' | 'notes' | 'tags', number>>;
+  locationId?: string;
 }
 
 // Derive 1-2 letter initials from a name string
@@ -104,6 +105,7 @@ const OpportunityCard = memo(function OpportunityCard({
   visibleActions = ['call', 'sms', 'email', 'appointment', 'tasks', 'notes', 'tags'],
   actionOrder = ['call', 'sms', 'email', 'appointment', 'tasks', 'notes', 'tags'],
   actionCounts = {},
+  locationId,
 }: OpportunityCardProps) {
   const ACTION_CONFIG: Record<string, { label: string; icon: React.ReactNode; onClick?: (e: React.MouseEvent) => void }> = {
     call: {
@@ -116,9 +118,18 @@ const OpportunityCard = memo(function OpportunityCard({
     sms: {
       label: 'Message',
       icon: <MessageSquare className="w-3.5 h-3.5" />,
-      onClick: opportunity.contact?.phone
-        ? (e) => { e.stopPropagation(); window.open(`sms:${opportunity.contact!.phone}`); }
-        : undefined,
+      onClick: (e) => {
+        e.stopPropagation();
+        const contactId = opportunity.contact?.id || opportunity.contactId;
+        if (contactId && locationId) {
+          const url = `https://app.gohighlevel.com/v2/location/${locationId}/contacts/detail/${contactId}`;
+          if (window.top) {
+            window.top.location.href = url;
+          } else {
+            window.parent.location.href = url;
+          }
+        }
+      },
     },
     email: {
       label: opportunity.contact?.email ? `Email ${opportunity.contact.email}` : 'Email',

@@ -112,8 +112,8 @@ export async function PUT(
     }
 
     if (body.pipelineStageId !== undefined) {
-      if (!currentPipelineId || body.pipelineId === currentPipelineId) {
-        // Pipeline hasn't changed — stage change is valid
+      if (!currentPipelineId || body.pipelineId === undefined || body.pipelineId === currentPipelineId) {
+        // Pipeline hasn't changed (or pipelineId wasn't sent, e.g. drag-drop) — stage change is valid
         ghlPayload.pipelineStageId = body.pipelineStageId;
       } else {
         // Pipeline would change (but we're keeping GHL's pipeline above) — keep GHL's stage too

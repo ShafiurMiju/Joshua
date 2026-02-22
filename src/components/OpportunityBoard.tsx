@@ -13,7 +13,6 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Filter,
   ArrowUpDown,
   Loader2,
 } from 'lucide-react';
@@ -102,19 +101,23 @@ interface CardWrapperProps {
   stageName: string;
   visibleActions: string[];
   actionOrder: string[];
+  locationId: string;
 }
 const CardWrapper = memo(function CardWrapper({
-  opp, visibleCardFields, cardFieldOrder, cardLayout, pipelineName, stageName, visibleActions, actionOrder,
+  opp, visibleCardFields, cardFieldOrder, cardLayout, pipelineName, stageName, visibleActions, actionOrder, locationId,
 }: CardWrapperProps) {
   const { draggedId, movingId, deletingId, updatingId, onDragStart, onEdit, onDelete, onStatusChange } = useContext(OperationContext);
-  const isOperating = movingId === opp.ghlId || deletingId === opp.ghlId || updatingId === opp.ghlId;
+  const isMoving = movingId === opp.ghlId;
+  const isOtherOp = deletingId === opp.ghlId || updatingId === opp.ghlId;
   return (
     <div
       draggable={!movingId && !deletingId && !updatingId}
       onDragStart={() => onDragStart(opp)}
-      className={`cursor-move relative ${draggedId === opp.ghlId ? 'opacity-50' : ''}`}
+      className={`cursor-move relative ${
+        draggedId === opp.ghlId ? 'opacity-50' : ''
+      } ${isMoving ? 'blur-[2px] opacity-60 pointer-events-none select-none' : ''}`}
     >
-      {isOperating && (
+      {isOtherOp && (
         <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-30 rounded-lg">
           <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
         </div>
@@ -131,6 +134,7 @@ const CardWrapper = memo(function CardWrapper({
         stageName={stageName}
         visibleActions={visibleActions}
         actionOrder={actionOrder}
+        locationId={locationId}
       />
     </div>
   );
@@ -153,9 +157,13 @@ interface StageColumnProps {
   pipelineName: string;
   visibleActions: string[];
   actionOrder: string[];
+  locationId: string;
+  isDragTarget: boolean;
+  draggedOpp: Opportunity | null;
   onToggleCollapse: (stageId: string) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent, stageId: string) => void;
+  onDragOver: (e: React.DragEvent, stageId: string) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent, stageId: string, dropIndex: number) => void;
   onPrevPage: (stageId: string) => void;
   onNextPage: (stageId: string) => void;
   onPageChange: (stageId: string, page: number) => void;
@@ -165,22 +173,93 @@ interface StageColumnProps {
 const StageColumn = memo(function StageColumn({
   stage, stageOpps, stageValue, isCollapsed, isLoading, boardLoading, stageTotal,
   stagePage, pageSize, paginationPerStage,
-  visibleCardFields, cardFieldOrder, cardLayout, pipelineName, visibleActions, actionOrder,
-  onToggleCollapse, onDragOver, onDrop, onPrevPage, onNextPage, onPageChange, onPageBlur,
+  visibleCardFields, cardFieldOrder, cardLayout, pipelineName, visibleActions, actionOrder, locationId,
+  isDragTarget, draggedOpp,
+  onToggleCollapse, onDragOver, onDragLeave, onDrop, onPrevPage, onNextPage, onPageChange, onPageBlur,
 }: StageColumnProps) {
   const totalPages = Math.ceil(stageTotal / pageSize);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dropIndex, setDropIndex] = useState<number>(0);
+
+  // Reset drop index when no longer a target
+  useEffect(() => {
+    if (!isDragTarget) setDropIndex(stageOpps.length);
+  }, [isDragTarget, stageOpps.length]);
+
+  const handleContainerDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (containerRef.current) {
+      const children = Array.from(containerRef.current.children) as HTMLElement[];
+      const mouseY = e.clientY;
+      let idx = children.length;
+      for (let i = 0; i < children.length; i++) {
+        const rect = children[i].getBoundingClientRect();
+        if (mouseY < rect.top + rect.height / 2) {
+          idx = i;
+          break;
+        }
+      }
+      setDropIndex(idx);
+    }
+    onDragOver(e, stage.id);
+  }, [onDragOver, stage.id]);
+
+  // Build card list with ghost spliced in at dropIndex
+  const cardItems: React.ReactNode[] = [];
+  const total = stageOpps.length;
+  for (let i = 0; i <= total; i++) {
+    if (isDragTarget && draggedOpp && i === dropIndex) {
+      cardItems.push(
+        <div key="__ghost__" className="pointer-events-none opacity-60 rounded-lg ring-2 ring-blue-400 ring-dashed">
+          <OpportunityCard
+            opportunity={draggedOpp}
+            onEdit={() => {}}
+            onDelete={() => {}}
+            onStatusChange={() => {}}
+            visibleFields={visibleCardFields}
+            fieldOrder={cardFieldOrder}
+            layout={cardLayout}
+            pipelineName={pipelineName}
+            stageName={stage.name}
+            visibleActions={visibleActions}
+            actionOrder={actionOrder}
+            locationId={locationId}
+          />
+        </div>
+      );
+    }
+    if (i < total) {
+      cardItems.push(
+        <CardWrapper
+          key={stageOpps[i].ghlId}
+          opp={stageOpps[i]}
+          visibleCardFields={visibleCardFields}
+          cardFieldOrder={cardFieldOrder}
+          cardLayout={cardLayout}
+          pipelineName={pipelineName}
+          stageName={stage.name}
+          visibleActions={visibleActions}
+          actionOrder={actionOrder}
+          locationId={locationId}
+        />
+      );
+    }
+  }
 
   return (
     <div
       className={`flex flex-col ${isCollapsed ? 'w-12' : 'w-72'} shrink-0 transition-all duration-200`}
-      onDragOver={onDragOver}
-      onDrop={(e) => onDrop(e, stage.id)}
+      onDragOver={handleContainerDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => onDrop(e, stage.id, dropIndex)}
     >
       {/* Stage Header */}
       <div
-        className={`bg-white border border-gray-200 cursor-pointer select-none hover:bg-gray-50 transition-colors ${
-          isCollapsed ? 'rounded-lg px-2 py-4' : 'rounded-t-lg border-b-0 px-4 py-3'
-        }`}
+        className={`bg-white border cursor-pointer select-none transition-colors ${
+          isDragTarget
+            ? 'border-blue-400 bg-blue-50 shadow-[0_0_0_2px_rgba(59,130,246,0.3)]'
+            : 'border-gray-200 hover:bg-gray-50'
+        } ${isCollapsed ? 'rounded-lg px-2 py-4' : 'rounded-t-lg border-b-0 px-4 py-3'}`}
         onClick={() => onToggleCollapse(stage.id)}
       >
         {isCollapsed ? (
@@ -211,7 +290,12 @@ const StageColumn = memo(function StageColumn({
 
       {/* Stage Cards */}
       {!isCollapsed && (
-        <div className="bg-gray-50 border border-gray-200 rounded-b-lg p-2 space-y-2 h-[calc(100vh-320px)] overflow-y-auto relative">
+        <div
+          ref={containerRef}
+          className={`bg-gray-50 border rounded-b-lg p-2 flex flex-col gap-2 h-[calc(100vh-320px)] overflow-y-auto relative transition-colors ${
+            isDragTarget ? 'border-blue-400 bg-blue-50/40' : 'border-gray-200'
+          }`}
+        >
           {/* Skeleton loader */}
           {(isLoading || boardLoading) ? (
             <div className="flex flex-col gap-2 h-full animate-pulse">
@@ -228,21 +312,9 @@ const StageColumn = memo(function StageColumn({
               ))}
             </div>
           ) : null}
-          {/* Real cards */}
-          {!isLoading && !boardLoading && stageOpps.map((opp) => (
-            <CardWrapper
-              key={opp.ghlId}
-              opp={opp}
-              visibleCardFields={visibleCardFields}
-              cardFieldOrder={cardFieldOrder}
-              cardLayout={cardLayout}
-              pipelineName={pipelineName}
-              stageName={stage.name}
-              visibleActions={visibleActions}
-              actionOrder={actionOrder}
-            />
-          ))}
-          {stageOpps.length === 0 && !isLoading && !boardLoading && (
+          {/* Cards + ghost spliced at mouse position */}
+          {!isLoading && !boardLoading && cardItems}
+          {stageOpps.length === 0 && !isLoading && !boardLoading && !isDragTarget && (
             <div className="text-center py-8 text-gray-500 text-sm">No opportunities</div>
           )}
         </div>
@@ -754,7 +826,44 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
   }, [locationId, fetchOpportunities]);
 
   // Move opportunity to different stage (drag & drop)
-  const handleMoveOpportunity = useCallback(async (ghlId: string, newStageId: string) => {
+  const handleMoveOpportunity = useCallback(async (ghlId: string, newStageId: string, insertIndex: number) => {
+    // Optimistic update — remove from current position, splice into target stage at insertIndex
+    let previousStageId: string | null = null;
+    let previousIndex: number = -1;
+    setOpportunities(prev => {
+      const draggedIdx = prev.findIndex(o => o.ghlId === ghlId);
+      if (draggedIdx === -1) return prev;
+      const dragged = prev[draggedIdx];
+      previousStageId = dragged.pipelineStageId;
+      previousIndex = draggedIdx;
+
+      // Remove from current position
+      const rest = prev.filter(o => o.ghlId !== ghlId);
+
+      // Find cards in target stage within the remaining flat array
+      const targetCards = rest.filter(o => o.pipelineStageId === newStageId);
+
+      // Determine insertion point in the flat array
+      let insertAt: number;
+      if (insertIndex >= targetCards.length) {
+        // After the last card in the target stage
+        const last = targetCards[targetCards.length - 1];
+        insertAt = last ? rest.indexOf(last) + 1 : rest.length;
+      } else {
+        insertAt = rest.indexOf(targetCards[insertIndex]);
+      }
+
+      const updated = { ...dragged, pipelineStageId: newStageId };
+      return [...rest.slice(0, insertAt), updated, ...rest.slice(insertAt)];
+    });
+    // Optimistically adjust stage totals
+    if (previousStageId) {
+      setStageTotals(prev => ({
+        ...prev,
+        [previousStageId!]: Math.max(0, (prev[previousStageId!] ?? 1) - 1),
+        [newStageId]: (prev[newStageId] ?? 0) + 1,
+      }));
+    }
     setMovingOpportunity(ghlId);
     try {
       const res = await fetch(
@@ -762,21 +871,52 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipelineStageId: newStageId }) }
       );
       if (!res.ok) throw new Error('Failed to move opportunity');
-      await fetchOpportunities(metaRef.current.page);
+      const data = await res.json();
+      // Patch just this one card in state with the server-confirmed data
+      if (data.opportunity) {
+        setOpportunities(prev => prev.map(o =>
+          o.ghlId === ghlId ? { ...o, ...data.opportunity } : o
+        ));
+      }
     } catch (error) {
       console.error('Error moving opportunity:', error);
+      // Revert optimistic update on failure
+      if (previousStageId && previousIndex !== -1) {
+        setOpportunities(prev => {
+          const rest = prev.filter(o => o.ghlId !== ghlId);
+          const at = Math.min(previousIndex, rest.length);
+          const original = prev.find(o => o.ghlId === ghlId);
+          if (!original) return prev;
+          return [...rest.slice(0, at), { ...original, pipelineStageId: previousStageId! }, ...rest.slice(at)];
+        });
+        setStageTotals(prev => ({
+          ...prev,
+          [previousStageId!]: (prev[previousStageId!] ?? 0) + 1,
+          [newStageId]: Math.max(0, (prev[newStageId] ?? 1) - 1),
+        }));
+      }
     } finally {
       setMovingOpportunity(null);
     }
-  }, [locationId, fetchOpportunities]);
+  }, [locationId]);
+
+  const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
 
   // Drag and drop handlers
   const handleDragStart = useCallback((opp: Opportunity) => {
     setDraggedOpportunity(opp);
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  const handleDragOver = useCallback((e: React.DragEvent, stageId: string) => {
     e.preventDefault();
+    setDragOverStageId(stageId);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear if leaving the column entirely (not just entering a child element)
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+      setDragOverStageId(null);
+    }
   }, []);
 
   const handleToggleCollapse = useCallback((stageId: string) => {
@@ -823,13 +963,14 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
     setEditingOpportunity(opp);
   }, []);
 
-  const handleDrop = async (e: React.DragEvent, stageId: string) => {
+  const handleDrop = useCallback(async (e: React.DragEvent, stageId: string, dropIndex: number) => {
     e.preventDefault();
+    setDragOverStageId(null);
     if (draggedOpportunity && draggedOpportunity.pipelineStageId !== stageId) {
-      await handleMoveOpportunity(draggedOpportunity.ghlId, stageId);
+      await handleMoveOpportunity(draggedOpportunity.ghlId, stageId, dropIndex);
     }
     setDraggedOpportunity(null);
-  };
+  }, [draggedOpportunity, handleMoveOpportunity]);
 
   // Fetch users for this location
   const fetchUsers = useCallback(async () => {
@@ -914,23 +1055,16 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
     <div className="min-h-screen bg-gray-50">
       {/* Top Header */}
       <div className="bg-white border-b border-gray-200">
-        <div className="px-6 py-4">
+        <div className="px-6 pt-4">
           {/* Top tabs */}
-          <div className="flex items-center gap-6 mb-4">
-            <h1 className="text-lg font-semibold text-gray-900">Opportunities</h1>
-            <span className="text-sm font-medium text-blue-600 border-b-2 border-blue-600 pb-1">
-              Opportunities
-            </span>
-            <span className="text-sm text-gray-500 cursor-pointer hover:text-gray-700">
-              Pipelines
-            </span>
-            <span className="text-sm text-gray-500 cursor-pointer hover:text-gray-700">
-              Bulk Actions
-            </span>
+          <div className="flex items-center gap-2 mb-0">
+            <div className="flex items-center border border-gray-300 border-2 rounded-lg px-5 py-2 bg-white relative" style={{marginBottom: '-1px', zIndex: 1}}>
+              <span className="text-xl font-semibold text-gray-900">Opportunities</span>
+            </div>
           </div>
 
           {/* Pipeline selector + counts + actions */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between py-4">
             <div className="flex items-center gap-4">
               {/* Pipeline Dropdown */}
               <div className="relative">
@@ -1108,23 +1242,8 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
         </div>
 
         {/* Filter bar */}
-        <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between">
+        <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-end">
           <div className="flex items-center gap-3">
-            {/* Tabs */}
-            <button className="flex items-center gap-1 text-sm text-gray-900 font-medium border-b-2 border-transparent hover:border-gray-300 pb-1">
-              <List className="w-3.5 h-3.5" />
-              All
-            </button>
-            <span className="text-gray-300">|</span>
-            <button className="text-sm text-gray-700 hover:text-gray-900">+ List</button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Advanced Filters */}
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100">
-              <Filter className="w-3.5 h-3.5" />
-              Advanced Filters
-            </button>
 
             {/* Sort */}
             <div className="relative">
@@ -1149,7 +1268,6 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
                             setSortOrder('desc');
                             setShowSortDropdown(false);
                             await saveSettings(undefined, undefined, undefined, null, 'desc');
-                            fetchOpportunities(1);
                           }}
                           className="text-xs text-blue-600 hover:underline"
                         >
@@ -1177,7 +1295,6 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
                           setSortOrder(newOrder);
                           setShowSortDropdown(false);
                           await saveSettings(undefined, undefined, undefined, option.value, newOrder);
-                          fetchOpportunities(1);
                         }}
                         className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center justify-between ${
                           sortField === option.value ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
@@ -1285,8 +1402,12 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
                       pipelineName={currentPipeline.name}
                       visibleActions={visibleActions}
                       actionOrder={actionOrder}
+                      locationId={locationId}
+                      isDragTarget={dragOverStageId === stage.id && draggedOpportunity?.pipelineStageId !== stage.id}
+                      draggedOpp={draggedOpportunity}
                       onToggleCollapse={handleToggleCollapse}
                       onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
                       onDrop={handleDrop}
                       onPrevPage={handlePrevPage}
                       onNextPage={handleNextPage}

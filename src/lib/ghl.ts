@@ -195,14 +195,14 @@ export class GHLClient {
   async getContacts(
     locationId: string,
     query?: string
-  ): Promise<{ contacts: Array<{ id: string; name: string; email: string; phone: string }>; total: number }> {
+  ): Promise<{ contacts: Array<{ id: string; name: string; email: string; phone: string; tags?: string[] }>; total: number }> {
     const searchParams = new URLSearchParams();
     searchParams.set('locationId', locationId);
     if (query) searchParams.set('query', query);
     searchParams.set('limit', '100');
 
     const response = await this.request<{
-      contacts: Array<{ id: string; contactName?: string; firstName?: string; lastName?: string; email?: string; phone?: string }>;
+      contacts: Array<{ id: string; contactName?: string; firstName?: string; lastName?: string; email?: string; phone?: string; tags?: string[] }>;
       total?: number;
     }>(`/contacts/?${searchParams.toString()}`);
 
@@ -212,6 +212,7 @@ export class GHLClient {
       name: contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unnamed Contact',
       email: contact.email || '',
       phone: contact.phone || '',
+      tags: contact.tags || [],
     }));
 
     return {

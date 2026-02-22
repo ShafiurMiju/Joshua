@@ -66,7 +66,7 @@ export default function OpportunityForm({
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('details');
   const [showContactDetails, setShowContactDetails] = useState(true);
-  const [contacts, setContacts] = useState<Array<{ id: string; name: string; email: string; phone: string }>>([]);
+  const [contacts, setContacts] = useState<Array<{ id: string; name: string; email: string; phone: string; tags?: string[] }>>([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
@@ -88,6 +88,7 @@ export default function OpportunityForm({
   const [locationTags, setLocationTags] = useState<string[]>([]);
   const tagDropdownRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const autoFilledNameRef = useRef<string>('');
   const stageDropdownRef = useRef<HTMLDivElement>(null);
   const pipelineDropdownRef = useRef<HTMLDivElement>(null);
   const ownerDropdownRef = useRef<HTMLDivElement>(null);
@@ -173,6 +174,8 @@ export default function OpportunityForm({
     } else {
       setSelectedTags([]);
     }
+    // Reset auto-fill tracking whenever the form opens fresh
+    autoFilledNameRef.current = '';
   }, [initialData, isOpen]);
 
   // Sync additionalContacts from initialData (cross-ref with contacts list)
@@ -413,13 +416,23 @@ export default function OpportunityForm({
   const handleContactChange = (contactId: string) => {
     const selectedContact = contacts.find((c) => c.id === contactId);
     if (selectedContact) {
-      setFormData((prev) => ({
-        ...prev,
-        contactId: selectedContact.id,
-        contactName: selectedContact.name,
-        contactEmail: selectedContact.email,
-        contactPhone: selectedContact.phone,
-      }));
+      setFormData((prev) => {
+        // Update name if: empty, or still equals the previously auto-filled value
+        const shouldUpdateName =
+          prev.name.trim() === '' || prev.name === autoFilledNameRef.current;
+        const newName = shouldUpdateName ? selectedContact.name : prev.name;
+        autoFilledNameRef.current = shouldUpdateName ? selectedContact.name : autoFilledNameRef.current;
+        return {
+          ...prev,
+          contactId: selectedContact.id,
+          contactName: selectedContact.name,
+          contactEmail: selectedContact.email,
+          contactPhone: selectedContact.phone,
+          name: newName,
+        };
+      });
+      // Always replace tags with the new contact's tags (clears old ones if none)
+      setSelectedTags(selectedContact.tags || []);
       setShowContactDropdown(false);
       setContactSearch('');
     }

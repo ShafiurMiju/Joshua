@@ -1,7 +1,7 @@
 'use client';
 
-import { memo } from 'react';
-import { Phone, Mail, MessageSquare, Calendar, Trash2, CheckSquare, FileText, Tag } from 'lucide-react';
+import { memo, useState, useRef, useCallback, useEffect } from 'react';
+import { Phone, Mail, MessageSquare, Calendar, Trash2, CheckSquare, FileText, Tag, User } from 'lucide-react';
 
 interface OpportunityCardProps {
   opportunity: {
@@ -92,6 +92,43 @@ function BadgeIcon({ icon, count, label, onClick, rawLabel }: {
   );
 }
 
+function TagsPopover({ tags, icon, count }: { tags: string[]; icon: React.ReactNode; count?: number }) {
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  return (
+    <div
+      ref={triggerRef}
+      onMouseEnter={() => {
+        if (!triggerRef.current) return;
+        const rect = triggerRef.current.getBoundingClientRect();
+        setPos({ top: rect.top, left: rect.left + rect.width / 2 });
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      <BadgeIcon icon={icon} count={count} label={`Tags (${tags.length})`} />
+      {pos && (
+        <div
+          style={{
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            transform: 'translateX(-50%) translateY(-100%) translateY(-8px)',
+            zIndex: 9999,
+            pointerEvents: 'none',
+          }}
+        >
+          <div className="bg-gray-900 text-white rounded-lg shadow-xl py-1.5 px-0.5 min-w-[120px] max-w-[200px]">
+            {tags.map((tag, i) => (
+              <div key={i} className="px-3 py-1 text-xs whitespace-nowrap truncate">{tag}</div>
+            ))}
+          </div>
+          <div className="w-2 h-2 bg-gray-900 rotate-45 mx-auto -mt-1" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 const OpportunityCard = memo(function OpportunityCard({
   opportunity,
   onEdit,
@@ -107,6 +144,24 @@ const OpportunityCard = memo(function OpportunityCard({
   actionCounts = {},
   locationId,
 }: OpportunityCardProps) {
+  // Detect GHL base URL dynamically from parent frame or referrer
+  const ghlBaseUrl = (() => {
+    try {
+      if (typeof window !== 'undefined') {
+        // Try ancestor origin (works when embedded in iframe)
+        if (window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0) {
+          return window.location.ancestorOrigins[0];
+        }
+        // Fallback: parse document.referrer
+        if (document.referrer) {
+          const url = new URL(document.referrer);
+          return url.origin;
+        }
+      }
+    } catch { /* ignore */ }
+    return 'https://app.gohighlevel.com';
+  })();
+
   const ACTION_CONFIG: Record<string, { label: string; icon: React.ReactNode; onClick?: (e: React.MouseEvent) => void }> = {
     call: {
       label: opportunity.contact?.phone ? `Call ${opportunity.contact.phone}` : 'Call',
@@ -122,7 +177,7 @@ const OpportunityCard = memo(function OpportunityCard({
         e.stopPropagation();
         const contactId = opportunity.contact?.id || opportunity.contactId;
         if (contactId && locationId) {
-          const url = `https://app.gohighlevel.com/v2/location/${locationId}/contacts/detail/${contactId}`;
+          const url = `${ghlBaseUrl}/v2/location/${locationId}/contacts/detail/${contactId}`;
           if (window.top) {
             window.top.location.href = url;
           } else {
@@ -198,38 +253,10 @@ const OpportunityCard = memo(function OpportunityCard({
     const labelClass = layout !== 'unlabeled' ? 'text-gray-500' : 'sr-only';
     const spacing = 'py-0.5';
 
-    // ── Compact: render as inline value chip ──────────────────────────────────
+    // ── Compact: render as inline value chip (only used in hover detail) ──────
     if (layout === 'compact') {
-      let value: React.ReactNode = null;
-      switch (fieldId) {
-        case 'smartTags': return null;
-        case 'opportunityName': value = opportunity.name; break;
-        case 'contact': value = opportunity.contact?.name; break;
-        case 'businessName': value = opportunity.contact?.companyName; break;
-        case 'pipeline': value = pipelineName; break;
-        case 'stage': value = stageName; break;
-        case 'status':
-          return (
-            <span key={fieldId} className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-              opportunity.status === 'won' ? 'bg-green-50 text-green-700' :
-              opportunity.status === 'lost' ? 'bg-red-50 text-red-700' :
-              opportunity.status === 'abandoned' ? 'bg-gray-100 text-gray-600' :
-              'bg-blue-50 text-blue-700'
-            }`}>{opportunity.status}</span>
-          );
-        case 'opportunityValue': value = `$${(opportunity.monetaryValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`; break;
-        case 'contactEmail': value = opportunity.contact?.email; break;
-        case 'contactPhone': value = opportunity.contact?.phone; break;
-        case 'opportunityOwner': value = opportunity.assignedTo; break;
-        case 'opportunitySource': value = opportunity.source; break;
-        default: return null;
-      }
-      if (!value) return null;
-      return (
-        <span key={fieldId} className="inline-flex items-center text-[10px] text-gray-700 bg-gray-100 rounded px-1.5 py-0.5 max-w-[120px] truncate">
-          {value}
-        </span>
-      );
+      // Compact fields are rendered inline via renderCompactCard; skip normal rendering
+      return null;
     }
 
     // ── Default / Unlabeled: stacked label:value rows ─────────────────────────
@@ -526,9 +553,219 @@ const OpportunityCard = memo(function OpportunityCard({
   const ownerInitials = ownerName ? getInitials(ownerName) : null;
   const ownerColour = ownerName ? avatarColour(ownerName) : '';
 
+  // Fixed-position tooltip state (for compact layout) — must be top-level hooks
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null);
+  const isDraggingRef = useRef(false);
+
+  useEffect(() => {
+    const onDragStart = () => { isDraggingRef.current = true; setTooltipPos(null); };
+    const onDragEnd   = () => { isDraggingRef.current = false; };
+    window.addEventListener('dragstart', onDragStart);
+    window.addEventListener('dragend',   onDragEnd);
+    return () => {
+      window.removeEventListener('dragstart', onDragStart);
+      window.removeEventListener('dragend',   onDragEnd);
+    };
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    if (!cardRef.current || isDraggingRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    setTooltipPos({ top: rect.top, left: rect.left });
+  }, []);
+  const handleMouseLeave = useCallback(() => setTooltipPos(null), []);
+
+  // Contact initials
+  const contactName = opportunity.contact?.name ?? '';
+  const contactInitials = contactName ? getInitials(contactName) : null;
+  const contactColour = contactName ? avatarColour(contactName) : '';
+
+  // ── Helper: build detail rows for hover tooltip ──
+  const buildDetailRows = (): { label: string; value: string; type?: string }[] => {
+    const rows: { label: string; value: string; type?: string }[] = [];
+    const orderedVisible = fieldOrder.filter(id => visibleFields.includes(id));
+    for (const fieldId of orderedVisible) {
+      switch (fieldId) {
+        case 'status': rows.push({ label: 'Status', value: opportunity.status, type: 'status' }); break;
+        case 'pipeline': if (pipelineName) rows.push({ label: 'Pipeline', value: pipelineName }); break;
+        case 'opportunityValue': rows.push({ label: 'Opportunity Value', value: `$${(opportunity.monetaryValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}` }); break;
+        case 'contact': if (opportunity.contact?.name) rows.push({ label: 'Contact', value: opportunity.contact.name, type: 'contact' }); break;
+        case 'stage': if (stageName) rows.push({ label: 'Stage', value: stageName }); break;
+        case 'opportunityName': if (opportunity.name) rows.push({ label: 'Opportunity', value: opportunity.name }); break;
+        case 'businessName': if (opportunity.contact?.companyName) rows.push({ label: 'Business', value: opportunity.contact.companyName }); break;
+        case 'contactEmail': if (opportunity.contact?.email) rows.push({ label: 'Email', value: opportunity.contact.email }); break;
+        case 'contactPhone': if (opportunity.contact?.phone) rows.push({ label: 'Phone', value: opportunity.contact.phone }); break;
+        case 'opportunityOwner': if (opportunity.assignedTo) rows.push({ label: 'Owner', value: opportunity.assignedTo }); break;
+        case 'opportunitySource': if (opportunity.source) rows.push({ label: 'Source', value: opportunity.source }); break;
+        case 'createdOn': if (opportunity.ghlCreatedAt) rows.push({ label: 'Created On', value: formatDate(opportunity.ghlCreatedAt) }); break;
+        case 'updatedOn': if (opportunity.ghlUpdatedAt) rows.push({ label: 'Updated On', value: formatDate(opportunity.ghlUpdatedAt) }); break;
+        case 'lastStatusChangeDate': if (opportunity.lastStatusChangeAt) rows.push({ label: 'Last Status Change', value: formatDate(opportunity.lastStatusChangeAt) }); break;
+        case 'lastStageChangeDate': if (opportunity.lastStageChangeAt) rows.push({ label: 'Last Stage Change', value: formatDate(opportunity.lastStageChangeAt) }); break;
+        case 'daysSinceLastStageChange': { const d = calculateDays(opportunity.lastStageChangeAt || ''); if (d !== null) rows.push({ label: 'Days Since Stage Change', value: `${d}` }); break; }
+        case 'daysSinceLastStatusChange': { const d = calculateDays(opportunity.lastStatusChangeAt || ''); if (d !== null) rows.push({ label: 'Days Since Status Change', value: `${d}` }); break; }
+        case 'daysSinceLastUpdated': { const d = calculateDays(opportunity.ghlUpdatedAt || ''); if (d !== null) rows.push({ label: 'Days Since Updated', value: `${d}` }); break; }
+      }
+    }
+    return rows;
+  };
+
+  // ── COMPACT LAYOUT ──────────────────────────────────────────────────────────
+  if (layout === 'compact') {
+    const detailRows = buildDetailRows();
+
+    return (
+      <div
+        ref={cardRef}
+        className="bg-white rounded-lg border border-gray-200 hover:shadow-md transition-all duration-150 cursor-pointer group relative"
+        onClick={() => onEdit(opportunity)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        {/* ── Fixed-position hover detail tooltip ── */}
+        {tooltipPos && detailRows.length > 0 && (
+          <div
+            className="fixed z-[9999] pointer-events-none"
+            style={{ top: tooltipPos.top, left: tooltipPos.left, transform: 'translateY(-100%) translateY(-8px)' }}
+          >
+            <div className="bg-gray-900 text-white rounded-lg shadow-2xl py-2.5 px-3.5" style={{ minWidth: 220, maxWidth: 300 }}>
+              {detailRows.map((row, i) => (
+                <div key={i} className="flex items-center justify-between gap-4 py-1 text-xs">
+                  <span className="text-gray-400 shrink-0 font-medium">{row.label}:</span>
+                  {row.type === 'status' ? (
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                      opportunity.status === 'won' ? 'bg-green-600 text-white' :
+                      opportunity.status === 'lost' ? 'bg-red-600 text-white' :
+                      opportunity.status === 'abandoned' ? 'bg-gray-600 text-white' :
+                      'bg-gray-700 text-white'
+                    }`}>{row.value}</span>
+                  ) : row.type === 'contact' ? (
+                    <span className="flex items-center gap-1.5 text-white font-medium">
+                      <span className={`shrink-0 w-5 h-5 rounded-full text-[8px] font-bold flex items-center justify-center select-none ${contactColour}`}>
+                        {contactInitials}
+                      </span>
+                      <span className="truncate">{row.value}</span>
+                    </span>
+                  ) : (
+                    <span className="text-white font-medium text-right truncate">{row.value}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* Down arrow */}
+            <div className="flex justify-start ml-6">
+              <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-gray-900" />
+            </div>
+          </div>
+        )}
+
+        {/* ── Header row: opportunity name + owner avatar ── */}
+        <div className="px-2.5 pt-2 pb-1 flex items-start justify-between gap-1.5">
+          <button
+            className="text-left flex-1 min-w-0"
+            onClick={(e) => { e.stopPropagation(); onEdit(opportunity); }}
+            title={opportunity.name || 'Untitled'}
+          >
+            <span className="block text-[13px] font-semibold text-gray-900 leading-snug truncate hover:text-blue-600 transition-colors">
+              {opportunity.name || 'Untitled'}
+            </span>
+          </button>
+
+          {ownerInitials ? (
+            <span
+              className={`shrink-0 w-6 h-6 rounded-full text-[9px] font-bold flex items-center justify-center select-none ${ownerColour}`}
+              title={ownerName}
+            >
+              {ownerInitials}
+            </span>
+          ) : (
+            <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-[9px] font-bold flex items-center justify-center">
+              <User className="w-3 h-3" />
+            </span>
+          )}
+        </div>
+
+        {/* ── Info row 1: status pill + pipeline + value ── */}
+        <div className="px-2.5 pb-1 flex items-center gap-2 flex-wrap">
+          {isFieldVisible('status') && (
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border ${
+              opportunity.status === 'won' ? 'border-green-300 text-green-700 bg-green-50' :
+              opportunity.status === 'lost' ? 'border-red-300 text-red-700 bg-red-50' :
+              opportunity.status === 'abandoned' ? 'border-gray-300 text-gray-600 bg-gray-50' :
+              'border-gray-300 text-gray-700 bg-white'
+            }`}>{opportunity.status}</span>
+          )}
+          {isFieldVisible('pipeline') && pipelineName && (
+            <span className="text-xs text-gray-600">{pipelineName}</span>
+          )}
+          {isFieldVisible('opportunityValue') && (
+            <span className="text-xs font-semibold text-gray-900">
+              ${(opportunity.monetaryValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+          )}
+        </div>
+
+        {/* ── Info row 2: contact avatar + contact name + stage ── */}
+        <div className="px-2.5 pb-1.5 flex items-center gap-1.5">
+          {isFieldVisible('contact') && opportunity.contact?.name && (
+            <>
+              {contactInitials ? (
+                <span
+                  className={`shrink-0 w-5 h-5 rounded-full text-[8px] font-bold flex items-center justify-center select-none ${contactColour}`}
+                  title={contactName}
+                >
+                  {contactInitials}
+                </span>
+              ) : null}
+              <span className="text-xs text-gray-700 truncate">{opportunity.contact.name}</span>
+            </>
+          )}
+          {isFieldVisible('stage') && stageName && (
+            <span className="text-xs text-gray-500 truncate ml-1">{stageName}</span>
+          )}
+        </div>
+
+        {/* ── Action Bar ── */}
+        <div
+          className="px-2 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center gap-0.5 rounded-b-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {actionOrder
+            .filter((id) => visibleActions.includes(id) && ACTION_CONFIG[id])
+            .map((id) => {
+              const action = ACTION_CONFIG[id];
+              if (id === 'tags' && tags.length > 0) {
+                return (
+                  <TagsPopover key={id} tags={tags} icon={action.icon} count={counts[id]} />
+                );
+              }
+              return (
+                <BadgeIcon
+                  key={id}
+                  icon={action.icon}
+                  count={counts[id]}
+                  label={action.label}
+                  onClick={action.onClick}
+                />
+              );
+            })}
+
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(opportunity.ghlId); }}
+            className="ml-auto p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+            title="Delete"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── DEFAULT / UNLABELED LAYOUT ──────────────────────────────────────────────
   return (
     <div
-      className="bg-white rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-150 overflow-hidden cursor-pointer group"
+      className="bg-white rounded-lg border border-gray-200 hover:shadow-md transition-all duration-150 overflow-hidden cursor-pointer group"
       onClick={() => onEdit(opportunity)}
     >
       {/* ── Header row: opportunity name + owner avatar ── */}
@@ -560,7 +797,7 @@ const OpportunityCard = memo(function OpportunityCard({
       </div>
 
       {/* ── Dynamic fields ── */}
-      <div className={layout === 'compact' ? 'px-2.5 pb-1.5 flex flex-wrap gap-1' : 'px-2.5 pb-1.5 space-y-0.5'}>
+      <div className="px-2.5 pb-1.5 space-y-0.5">
         {fieldOrder.map((fieldId) => renderField(fieldId))}
       </div>
 
@@ -577,21 +814,7 @@ const OpportunityCard = memo(function OpportunityCard({
             // Tags: show hover popover with tag names
             if (id === 'tags' && tags.length > 0) {
               return (
-                <div key={id} className="relative group/tags">
-                  <BadgeIcon
-                    icon={action.icon}
-                    count={counts[id]}
-                    label={`Tags (${tags.length})`}
-                  />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tags:block z-30 min-w-[120px] max-w-[200px]">
-                    <div className="bg-gray-900 text-white rounded-lg shadow-xl py-1.5 px-0.5">
-                      {tags.map((tag, i) => (
-                        <div key={i} className="px-3 py-1 text-xs whitespace-nowrap truncate">{tag}</div>
-                      ))}
-                    </div>
-                    <div className="w-2 h-2 bg-gray-900 rotate-45 mx-auto -mt-1" />
-                  </div>
-                </div>
+                <TagsPopover key={id} tags={tags} icon={action.icon} count={counts[id]} />
               );
             }
             return (

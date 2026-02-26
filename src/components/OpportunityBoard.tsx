@@ -189,7 +189,10 @@ const StageColumn = memo(function StageColumn({
   const handleContainerDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     if (containerRef.current) {
-      const children = Array.from(containerRef.current.children) as HTMLElement[];
+      // Exclude the ghost placeholder from position calculations to prevent flickering
+      const children = Array.from(containerRef.current.children).filter(
+        (el) => !(el as HTMLElement).dataset.ghost
+      ) as HTMLElement[];
       const mouseY = e.clientY;
       let idx = children.length;
       for (let i = 0; i < children.length; i++) {
@@ -210,7 +213,7 @@ const StageColumn = memo(function StageColumn({
   for (let i = 0; i <= total; i++) {
     if (isDragTarget && draggedOpp && i === dropIndex) {
       cardItems.push(
-        <div key="__ghost__" className="pointer-events-none opacity-60 rounded-lg ring-2 ring-blue-400 ring-dashed">
+        <div key="__ghost__" data-ghost="true" className="pointer-events-none opacity-40 rounded-lg">
           <OpportunityCard
             opportunity={draggedOpp}
             onEdit={() => {}}
@@ -255,11 +258,7 @@ const StageColumn = memo(function StageColumn({
     >
       {/* Stage Header */}
       <div
-        className={`bg-white border cursor-pointer select-none transition-colors ${
-          isDragTarget
-            ? 'border-blue-400 bg-blue-50 shadow-[0_0_0_2px_rgba(59,130,246,0.3)]'
-            : 'border-gray-200 hover:bg-gray-50'
-        } ${isCollapsed ? 'rounded-lg px-2 py-4' : 'rounded-t-lg border-b-0 px-4 py-3'}`}
+        className={`bg-white border border-gray-200 cursor-pointer select-none transition-colors hover:bg-gray-50 ${isCollapsed ? 'rounded-lg px-2 py-4' : 'rounded-t-lg border-b-0 px-4 py-3'}`}
         onClick={() => onToggleCollapse(stage.id)}
       >
         {isCollapsed ? (
@@ -292,9 +291,7 @@ const StageColumn = memo(function StageColumn({
       {!isCollapsed && (
         <div
           ref={containerRef}
-          className={`bg-gray-50 border rounded-b-lg p-2 flex flex-col gap-2 h-[calc(100vh-320px)] overflow-y-auto relative transition-colors ${
-            isDragTarget ? 'border-blue-400 bg-blue-50/40' : 'border-gray-200'
-          }`}
+          className="bg-gray-50 border border-gray-200 rounded-b-lg p-2 flex flex-col gap-2 h-[calc(100vh-320px)] overflow-y-auto relative"
         >
           {/* Skeleton loader */}
           {(isLoading || boardLoading) ? (
@@ -783,12 +780,39 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }
       );
       if (!res.ok) throw new Error('Failed to update opportunity');
+      const resData = await res.json();
+      const updated = resData.opportunity as Opportunity;
       setEditingOpportunity(null);
-      await fetchOpportunities(metaRef.current.page);
+      // Update only the changed opportunity in state instead of refetching all
+      if (updated) {
+        setOpportunities(prev => {
+          const oldOpp = prev.find(o => o.ghlId === opp.ghlId);
+          // If pipeline changed, remove from current view (it belongs to a different pipeline now)
+          if (oldOpp && updated.pipelineId !== oldOpp.pipelineId) {
+            setStageTotals(prevTotals => ({
+              ...prevTotals,
+              [oldOpp.pipelineStageId]: Math.max(0, (prevTotals[oldOpp.pipelineStageId] || 1) - 1),
+            }));
+            setMeta(prevMeta => ({ ...prevMeta, total: Math.max(0, prevMeta.total - 1) }));
+            return prev.filter(o => o.ghlId !== opp.ghlId);
+          }
+          const stageChanged = oldOpp && oldOpp.pipelineStageId !== updated.pipelineStageId;
+          const newList = prev.map(o => o.ghlId === opp.ghlId ? { ...o, ...updated } : o);
+          // Update stage totals if the stage changed
+          if (stageChanged && oldOpp) {
+            setStageTotals(prevTotals => ({
+              ...prevTotals,
+              [oldOpp.pipelineStageId]: Math.max(0, (prevTotals[oldOpp.pipelineStageId] || 1) - 1),
+              [updated.pipelineStageId]: (prevTotals[updated.pipelineStageId] || 0) + 1,
+            }));
+          }
+          return newList;
+        });
+      }
     } finally {
       setUpdatingOpportunity(false);
     }
-  }, [locationId, fetchOpportunities]);
+  }, [locationId]);
 
   // Delete opportunity
   const handleDeleteOpportunity = useCallback(async (ghlId: string) => {
@@ -800,13 +824,24 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
         { method: 'DELETE' }
       );
       if (!res.ok) throw new Error('Failed to delete opportunity');
-      await fetchOpportunities(metaRef.current.page);
+      // Remove the deleted opportunity from state instead of refetching all
+      setOpportunities(prev => {
+        const deleted = prev.find(o => o.ghlId === ghlId);
+        if (deleted) {
+          setStageTotals(prevTotals => ({
+            ...prevTotals,
+            [deleted.pipelineStageId]: Math.max(0, (prevTotals[deleted.pipelineStageId] || 1) - 1),
+          }));
+          setMeta(prevMeta => ({ ...prevMeta, total: Math.max(0, prevMeta.total - 1) }));
+        }
+        return prev.filter(o => o.ghlId !== ghlId);
+      });
     } catch (error) {
       console.error('Error deleting opportunity:', error);
     } finally {
       setDeletingOpportunity(null);
     }
-  }, [locationId, fetchOpportunities]);
+  }, [locationId]);
 
   // Update opportunity status
   const handleStatusChange = useCallback(async (ghlId: string, status: string) => {
@@ -817,13 +852,18 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }
       );
       if (!res.ok) throw new Error('Failed to update status');
-      await fetchOpportunities(metaRef.current.page);
+      const resData = await res.json();
+      const updated = resData.opportunity as Opportunity;
+      // Update only the changed opportunity in state instead of refetching all
+      if (updated) {
+        setOpportunities(prev => prev.map(o => o.ghlId === ghlId ? { ...o, ...updated } : o));
+      }
     } catch (error) {
       console.error('Error updating status:', error);
     } finally {
       setUpdatingStatus(null);
     }
-  }, [locationId, fetchOpportunities]);
+  }, [locationId]);
 
   // Move opportunity to different stage (drag & drop)
   const handleMoveOpportunity = useCallback(async (ghlId: string, newStageId: string, insertIndex: number) => {
@@ -1000,6 +1040,9 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
       setSearchLoading(false);
       setSortLoading(false);
 
+      // Only search when query is empty (reset) or has minimum 3 characters
+      if (searchQuery.length > 0 && searchQuery.length < MIN_SEARCH_CHARS) return;
+
       const prev = prevDepsRef.current;
       const onlySortChanged = prev !== null &&
         prev.pipelineId === selectedPipelineId &&
@@ -1016,6 +1059,8 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPipelineId, settingsLoaded, searchQuery, sortField, sortOrder, paginationEnabled, paginationPerStage, pageSize]);
+
+  const MIN_SEARCH_CHARS = 3;
 
   const currentPipeline = useMemo(
     () => pipelines.find((p) => p.ghlId === selectedPipelineId),
@@ -1315,6 +1360,19 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
 
             {/* Search */}
             <div className="relative">
+              {/* Tooltip: shown when 1 or 2 chars typed */}
+              {searchQuery.length > 0 && searchQuery.length < MIN_SEARCH_CHARS && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none">
+                  <div className="bg-gray-900 text-white text-xs font-medium px-3 py-1.5 rounded-md whitespace-nowrap shadow-lg">
+                    Enter {MIN_SEARCH_CHARS - searchQuery.length} more character{MIN_SEARCH_CHARS - searchQuery.length !== 1 ? 's' : ''}
+                  </div>
+                  {/* Caret */}
+                  <div className="flex justify-center">
+                    <div className="w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-gray-900" />
+                  </div>
+                </div>
+              )}
+
               {searchLoading && (
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
                   <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
@@ -1325,14 +1383,17 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
               }`} />
               <input
                 type="text"
-                placeholder="Search Opportunities"
+                placeholder="Search opportunities…"
                 value={searchQuery}
                 onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setSearchLoading(true);
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  if (val === '' || val.length >= MIN_SEARCH_CHARS) {
+                    setSearchLoading(true);
+                  }
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  if (e.key === 'Enter' && (searchQuery === '' || searchQuery.length >= MIN_SEARCH_CHARS)) {
                     setSearchLoading(true);
                     fetchOpportunities(1);
                   }
@@ -1381,7 +1442,10 @@ export default function OpportunityBoard({ locationId }: OpportunityBoardProps) 
                 {currentPipeline.stages
                 .sort((a, b) => a.position - b.position)
                 .map((stage) => {
-                  const stageOpps = opportunitiesByStage[stage.id] || [];
+                  const rawStageOpps = opportunitiesByStage[stage.id] || [];
+                  const stageOpps = paginationPerStage
+                    ? rawStageOpps.slice(0, pageSize * (stagePages[stage.id] || 1))
+                    : rawStageOpps;
                   const stageValue = stageOpps.reduce((sum, opp) => sum + (opp.monetaryValue || 0), 0);
                   return (
                     <StageColumn

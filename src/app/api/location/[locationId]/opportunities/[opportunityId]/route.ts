@@ -90,35 +90,20 @@ export async function PUT(
     if (body.assignedTo !== undefined) ghlPayload.assignedTo = body.assignedTo;
     if (body.customFields !== undefined) ghlPayload.customFields = body.customFields;
 
-    // For pipeline fields: always use GHL's current values unless the form is
-    // explicitly moving to a different stage/pipeline (detected by the board's drag-and-drop).
-    // This prevents "pipeline not found" 400 errors from stale DB values.
+    // For pipeline fields: trust the form-submitted values.
+    // If body sends pipelineId / pipelineStageId, use them (user explicitly chose them).
+    // Fall back to GHL's current values only when the body omits them.
     const currentPipelineId = (currentGhlOpp?.pipelineId as string) || '';
     const currentStageId = (currentGhlOpp?.pipelineStageId as string) || '';
 
-    // Only override pipeline/stage if the form value differs from what GHL currently has
-    // AND the current GHL value exists (meaning we did a successful pre-fetch)
     if (body.pipelineId !== undefined) {
-      if (!currentPipelineId || body.pipelineId === currentPipelineId) {
-        // Same as GHL or no GHL data — safe to send
-        ghlPayload.pipelineId = body.pipelineId;
-      } else {
-        // Form has a different pipelineId — use GHL's authoritative value to avoid 400
-        // (this handles stale DB values; drag-drop stage changes should match GHL anyway)
-        ghlPayload.pipelineId = currentPipelineId;
-      }
+      ghlPayload.pipelineId = body.pipelineId;
     } else if (currentPipelineId) {
       ghlPayload.pipelineId = currentPipelineId;
     }
 
     if (body.pipelineStageId !== undefined) {
-      if (!currentPipelineId || body.pipelineId === undefined || body.pipelineId === currentPipelineId) {
-        // Pipeline hasn't changed (or pipelineId wasn't sent, e.g. drag-drop) — stage change is valid
-        ghlPayload.pipelineStageId = body.pipelineStageId;
-      } else {
-        // Pipeline would change (but we're keeping GHL's pipeline above) — keep GHL's stage too
-        ghlPayload.pipelineStageId = currentStageId || body.pipelineStageId;
-      }
+      ghlPayload.pipelineStageId = body.pipelineStageId;
     } else if (currentStageId) {
       ghlPayload.pipelineStageId = currentStageId;
     }
@@ -200,7 +185,22 @@ export async function PUT(
       status: fullOpportunity?.status ?? body.status ?? 'open',
       source: fullOpportunity?.source ?? body.source ?? '',
       assignedTo: body.assignedTo !== undefined ? body.assignedTo : (fullOpportunity?.assignedTo ?? ''),
-      customFields: fullOpportunity?.customFields ?? body.customFields ?? [],
+
+      // Custom fields: form-submitted values (body.customFields) are authoritative because
+      // they use our { id, key, field_value } format, while GHL re-fetch returns a different
+      // format ({ id, fieldValueString, fieldValueArray, type }) that the card UI can't read.
+      // Use form values first; fall back to GHL data normalized to our format.
+      customFields: body.customFields && (body.customFields as unknown[]).length > 0
+        ? body.customFields
+        : (() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ghlCFs = (fullOpportunity?.customFields as Array<Record<string, any>>) || [];
+            return ghlCFs.map((cf) => ({
+              id: cf.id || '',
+              key: cf.key || cf.fieldKey || '',
+              field_value: cf.field_value ?? cf.fieldValueArray ?? cf.fieldValueString ?? '',
+            }));
+          })(),
 
       // Contact ID: form-submitted value is authoritative (GHL Update Opp API doesn't support contactId changes,
       // but we track it in DB. Use body.contactId first, then GHL's current value as fallback.)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   X, Search, GripVertical, Lock,
   Phone, MessageSquare, Mail, Calendar, FileText, CheckSquare, Tag,
@@ -96,25 +96,109 @@ function CardPreview({
   visibleActions: string[];
   actionOrder: string[];
 }) {
-  const previewData: Record<string, { label: string; value: React.ReactNode }> = {
-    smartTags:        { label: 'Tags',             value: <span className="px-1.5 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">Stale</span> },
-    opportunityName:  { label: 'Opportunity Name', value: <span className="font-semibold text-gray-900 text-sm">Opportunity Name</span> },
-    businessName:     { label: 'Business Name',    value: 'Tech Innovators Inc.' },
-    contact:          { label: 'Contact',          value: <><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold mr-1">JO</span>John Smith</> },
-    pipeline:         { label: 'Pipeline',         value: 'Sales Pipeline' },
-    stage:            { label: 'Stage',            value: 'Negotiation' },
-    status:           { label: 'Status',           value: <span className="px-1.5 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700">open</span> },
-    opportunityValue: { label: 'Value',            value: '$50,000.00' },
-    contactEmail:     { label: 'Email',            value: 'john@example.com' },
-    contactPhone:     { label: 'Phone',            value: '+1 555-0100' },
-    opportunityOwner: { label: 'Owner',            value: 'Jane Doe' },
+  const previewData: Record<string, { label: string; value: React.ReactNode; plainValue?: string }> = {
+    smartTags:        { label: 'Tags',             value: <span className="px-1.5 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">Stale</span>, plainValue: 'Stale' },
+    opportunityName:  { label: 'Opportunity Name', value: <span className="font-semibold text-gray-900 text-sm">Opportunity Name</span>, plainValue: 'Opportunity Name' },
+    businessName:     { label: 'Business Name',    value: 'Tech Innovators Inc.', plainValue: 'Tech Innovators Inc.' },
+    contact:          { label: 'Contact',          value: <><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold mr-1">JO</span>John Smith</>, plainValue: 'John Smith' },
+    pipeline:         { label: 'Pipeline',         value: 'Sales Pipeline', plainValue: 'Sales Pipeline' },
+    stage:            { label: 'Stage',            value: 'Negotiation', plainValue: 'Negotiation' },
+    status:           { label: 'Status',           value: <span className="px-1.5 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700">open</span>, plainValue: 'open' },
+    opportunityValue: { label: 'Value',            value: '$50,000.00', plainValue: '$50,000' },
+    contactEmail:     { label: 'Email',            value: 'john@example.com', plainValue: 'john@example.com' },
+    contactPhone:     { label: 'Phone',            value: '+1 555-0100', plainValue: '+1 555-0100' },
+    opportunityOwner: { label: 'Owner',            value: 'Jane Doe', plainValue: 'Jane Doe' },
   };
 
   const previewFields = fieldOrder.filter(id => visibleFields.includes(id) && previewData[id]);
   const previewActions = actionOrder.filter(id => visibleActions.includes(id));
 
-  const rowClass = layout === 'compact' ? 'flex items-center gap-1.5' : 'flex items-center justify-between gap-2';
-  const spacing = layout === 'compact' ? 'space-y-0.5' : 'space-y-1';
+  // ── Compact preview ──────────────────────────────────────────────────────
+  if (layout === 'compact') {
+    const detailFields = previewFields.filter(id => id !== 'opportunityName' && id !== 'smartTags');
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm max-w-[260px] relative group/preview overflow-visible">
+        {/* Header: name + owner avatar */}
+        <div className="px-2.5 pt-2 pb-1 flex items-start justify-between gap-1.5">
+          <span className="text-[13px] font-semibold text-gray-900 truncate leading-snug flex-1 min-w-0">Opportunity Name</span>
+          <span className="shrink-0 w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-[9px] font-bold flex items-center justify-center select-none">JD</span>
+        </div>
+
+        {/* Row 1: status pill + pipeline + value */}
+        <div className="px-2.5 pb-1 flex items-center gap-2 flex-wrap">
+          {previewFields.includes('status') && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border border-gray-300 text-gray-700 bg-white">open</span>
+          )}
+          {previewFields.includes('pipeline') && (
+            <span className="text-xs text-gray-600">Sales Pipeline</span>
+          )}
+          {previewFields.includes('opportunityValue') && (
+            <span className="text-xs font-semibold text-gray-900">$50,000.00</span>
+          )}
+        </div>
+
+        {/* Row 2: contact avatar + contact name + stage */}
+        <div className="px-2.5 pb-1.5 flex items-center gap-1.5">
+          {previewFields.includes('contact') && (
+            <>
+              <span className="shrink-0 w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[8px] font-bold flex items-center justify-center select-none">JS</span>
+              <span className="text-xs text-gray-700 truncate">John Smith</span>
+            </>
+          )}
+          {previewFields.includes('stage') && (
+            <span className="text-xs text-gray-500 truncate ml-1">Negotiation</span>
+          )}
+        </div>
+
+        {/* Action bar */}
+        {previewActions.length > 0 && (
+          <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-50 border-t border-gray-100 flex-wrap">
+            {previewActions.map(id => {
+              const action = ALL_QUICK_ACTIONS.find(a => a.id === id);
+              if (!action) return null;
+              return (
+                <span key={id} className="p-1 rounded bg-gray-100 text-gray-500">{action.icon}</span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Hover detail tooltip — appears ABOVE */}
+        {detailFields.length > 0 && (
+          <div className="absolute bottom-full left-0 mb-2 hidden group-hover/preview:block z-50 pointer-events-none">
+            <div className="bg-gray-900 text-white rounded-lg shadow-2xl py-2.5 px-3.5 min-w-[200px] max-w-[280px]">
+              {detailFields.map(id => {
+                const f = previewData[id];
+                if (!f) return null;
+                return (
+                  <div key={id} className="flex items-center justify-between gap-4 py-1 text-xs">
+                    <span className="text-gray-400 shrink-0 font-medium">{f.label}:</span>
+                    {id === 'status' ? (
+                      <span className="px-2 py-0.5 rounded bg-gray-700 text-white text-[11px] font-semibold">open</span>
+                    ) : id === 'contact' ? (
+                      <span className="flex items-center gap-1.5 text-white font-medium">
+                        <span className="shrink-0 w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[8px] font-bold flex items-center justify-center select-none">JS</span>
+                        <span className="truncate">John Smith</span>
+                      </span>
+                    ) : (
+                      <span className="text-white font-medium text-right truncate">{f.plainValue}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-start ml-6">
+              <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-gray-900" />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Default / Unlabeled preview ──────────────────────────────────────────
+  const rowClass = 'flex items-center justify-between gap-2';
+  const spacing = 'space-y-1';
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-3 max-w-[260px]">
@@ -185,6 +269,16 @@ export default function CustomizeCardPanel({
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['otherDetails']));
   const [draggedField, setDraggedField] = useState<string | null>(null);
   const [draggedAction, setDraggedAction] = useState<string | null>(null);
+
+  // Sync local state whenever the panel opens or the parent props change (e.g. after async settings load)
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelectedLayout(layout);
+    setSelectedFields(visibleFields);
+    setOrderedFields(fieldOrder);
+    setSelectedActions(visibleActions?.length ? visibleActions : DEFAULT_VISIBLE_ACTIONS);
+    setOrderedActions(actionOrder?.length ? actionOrder : ALL_QUICK_ACTIONS.map(a => a.id));
+  }, [isOpen, layout, visibleFields, fieldOrder, visibleActions, actionOrder]);
 
   if (!isOpen) return null;
 

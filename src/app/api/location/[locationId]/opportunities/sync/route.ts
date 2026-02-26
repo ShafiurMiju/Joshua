@@ -66,7 +66,13 @@ export async function POST(
               isAttribute: opp.isAttribute || false,
               internalSource: opp.internalSource || {},
               followers: opp.followers || [],
-              customFields: opp.customFields || [],
+              // Normalize GHL custom fields to { id, key, field_value } format
+              // GHL may return { id, fieldValueString, fieldValueArray, type } or { id, key, field_value }
+              customFields: (opp.customFields || []).map((cf: Record<string, unknown>) => ({
+                id: (cf as Record<string, string>).id || '',
+                key: (cf as Record<string, string>).key || (cf as Record<string, string>).fieldKey || '',
+                field_value: (cf as Record<string, unknown>).field_value ?? (cf as Record<string, unknown>).fieldValueArray ?? (cf as Record<string, unknown>).fieldValueString ?? '',
+              })),
               ghlCreatedAt: opp.createdAt || '',
               ghlUpdatedAt: opp.updatedAt || '',
               syncedAt: now,

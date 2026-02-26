@@ -189,18 +189,10 @@ export async function PUT(
       // Custom fields: form-submitted values (body.customFields) are authoritative because
       // they use our { id, key, field_value } format, while GHL re-fetch returns a different
       // format ({ id, fieldValueString, fieldValueArray, type }) that the card UI can't read.
-      // Use form values first; fall back to GHL data normalized to our format.
+      // When body.customFields is not sent (e.g. stage drag), keep existing DB values unchanged.
       customFields: body.customFields && (body.customFields as unknown[]).length > 0
         ? body.customFields
-        : (() => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ghlCFs = (fullOpportunity?.customFields as Array<Record<string, any>>) || [];
-            return ghlCFs.map((cf) => ({
-              id: cf.id || '',
-              key: cf.key || cf.fieldKey || '',
-              field_value: cf.field_value ?? cf.fieldValueArray ?? cf.fieldValueString ?? '',
-            }));
-          })(),
+        : undefined, // undefined = skip this field in $set so existing DB custom fields are preserved
 
       // Contact ID: form-submitted value is authoritative (GHL Update Opp API doesn't support contactId changes,
       // but we track it in DB. Use body.contactId first, then GHL's current value as fallback.)
@@ -237,6 +229,11 @@ export async function PUT(
       ghlUpdatedAt: fullOpportunity?.updatedAt ?? '',
       syncedAt: new Date(),
     };
+
+    // Remove undefined keys so MongoDB doesn't overwrite existing values with null
+    for (const key of Object.keys(dbUpdate)) {
+      if (dbUpdate[key] === undefined) delete dbUpdate[key];
+    }
 
     const dbOpportunity = await Opportunity.findOneAndUpdate(
       { ghlId: opportunityId, locationId },
